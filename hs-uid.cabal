@@ -21,3 +21,4 @@ executable hs-uid
                      , random
                      , time
                      , optparse-applicative
+                     , mtl

@@ -8,6 +8,7 @@ module Main where
 -- imports {{{
 
 import           Control.Monad         (replicateM)
+import           Control.Monad.Reader  (ReaderT, asks, liftIO, runReaderT)
 import           Data.Semigroup        ((<>))
 import           Data.Time.Clock       (getCurrentTime)
 import           Data.Time.Clock.POSIX (getPOSIXTime)
@@ -16,6 +17,11 @@ import qualified System.Random         as Random
 import           Text.Read             (readMaybe)
 
 -- }}}
+
+data Options = Options
+  { prefix        :: String
+  , randomLength  :: Int
+  , timePrecision :: Int }
 
 -- Basics for encoding unique IDs {{{
 
@@ -32,9 +38,6 @@ charset = numeric ++ alpha
 
 -- Custom-precision, encoded time part {{{
 
-timeMS :: Int -> IO Integer
-timeMS precision = round . (*(10 ^ precision)) <$> getPOSIXTime
-
 encodeTime :: [Char] -> Integer -> [Char] -> [Char]
 encodeTime charset timestamp str =
   if timestamp == 0
@@ -45,13 +48,20 @@ encodeTime charset timestamp str =
     index = fromInteger $ timestamp `rem` charsetLen
     encodedChar = charset !! index
 
+timeMS :: ReaderT Options IO String
+timeMS = do
+  precision <- asks timePrecision
+  now <- round . (*(10 ^ precision)) <$> liftIO getPOSIXTime
+  return $ encodeTime charset now ""
+
 -- }}}
 
 -- Random part {{{
 
-randomPart :: [Char] -> Int -> IO [Char]
-randomPart charset numChars =
-  replicateM numChars randomizeChar
+randomPart :: ReaderT Options IO [Char]
+randomPart = do
+  numRandomChars <- asks randomLength
+  liftIO $ replicateM numRandomChars randomizeChar
   where
     charsetLen = toInteger $ length charset
     randomizeChar = do
@@ -60,21 +70,16 @@ randomPart charset numChars =
 
 -- }}}
 
-makePrefixedUniqueId :: [Char] -> Int -> Int -> IO [Char]
-makePrefixedUniqueId prefix randomPartLength timePrecision = do
-  now <- timeMS timePrecision
-  let encodedTime = encodeTime charset now ""
+makePrefixedUniqueId :: ReaderT Options IO [Char]
+makePrefixedUniqueId = do
+  prefix <- asks prefix
 
-  encodedRandomPart <- randomPart charset randomPartLength
+  encodedTime <- timeMS
+  encodedRandomPart <- randomPart
 
   return $ prefix ++ "-" ++ encodedTime ++ "-" ++ encodedRandomPart
 
 -- CLI Options {{{
-
-data Options = Options
-  { prefix        :: String
-  , randomLength  :: Int
-  , timePrecision :: Int }
 
 positiveIntReader :: ReadM Int
 positiveIntReader = eitherReader $ \arg ->
@@ -126,5 +131,5 @@ opts = info (argsParser <**> helper)
 main :: IO ()
 main = do
   options <- execParser opts
-  uid <- makePrefixedUniqueId (prefix options) (randomLength options) (timePrecision options)
+  uid <- runReaderT makePrefixedUniqueId options
   putStrLn uid
